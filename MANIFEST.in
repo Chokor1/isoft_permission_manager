@@ -1,0 +1,18 @@
+include MANIFEST.in
+include requirements.txt
+include *.json
+include *.md
+include *.py
+include *.txt
+recursive-include isoft_permission_manager *.css
+recursive-include isoft_permission_manager *.csv
+recursive-include isoft_permission_manager *.html
+recursive-include isoft_permission_manager *.ico
+recursive-include isoft_permission_manager *.js
+recursive-include isoft_permission_manager *.json
+recursive-include isoft_permission_manager *.md
+recursive-include isoft_permission_manager *.png
+recursive-include isoft_permission_manager *.py
+recursive-include isoft_permission_manager *.svg
+recursive-include isoft_permission_manager *.txt
+recursive-exclude isoft_permission_manager *.pyc

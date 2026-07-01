@@ -1,0 +1,170 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:manager",
+ "creation": "2026-06-30 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "manager",
+  "enabled",
+  "column_break_head",
+  "description",
+  "capabilities_section",
+  "can_edit_roles",
+  "can_edit_user_permissions",
+  "column_break_caps",
+  "can_edit_modules",
+  "can_view_pages_reports",
+  "users_section",
+  "all_users",
+  "allowed_users",
+  "scope_section",
+  "all_roles",
+  "allowed_roles",
+  "column_break_scope",
+  "all_modules",
+  "allowed_modules"
+ ],
+ "fields": [
+  {
+   "fieldname": "manager",
+   "fieldtype": "Link",
+   "label": "Manager (User)",
+   "options": "User",
+   "reqd": 1,
+   "unique": 1,
+   "in_standard_filter": 1,
+   "description": "The user who is allowed to manage permissions. They should also have the 'ISOFT Permission Manager' role."
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  },
+  {
+   "fieldname": "capabilities_section",
+   "fieldtype": "Section Break",
+   "label": "Capabilities"
+  },
+  {
+   "default": "1",
+   "fieldname": "can_edit_roles",
+   "fieldtype": "Check",
+   "label": "Can Edit Role Assignments"
+  },
+  {
+   "default": "1",
+   "fieldname": "can_edit_user_permissions",
+   "fieldtype": "Check",
+   "label": "Can Edit User Permissions"
+  },
+  {
+   "fieldname": "column_break_caps",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "can_edit_modules",
+   "fieldtype": "Check",
+   "label": "Can Edit Module Access"
+  },
+  {
+   "default": "1",
+   "fieldname": "can_view_pages_reports",
+   "fieldtype": "Check",
+   "label": "Can View Pages / Reports"
+  },
+  {
+   "fieldname": "users_section",
+   "fieldtype": "Section Break",
+   "label": "Manageable Users",
+   "description": "Which users this manager is allowed to manage."
+  },
+  {
+   "default": "0",
+   "fieldname": "all_users",
+   "fieldtype": "Check",
+   "label": "All Users (except System Managers)"
+  },
+  {
+   "depends_on": "eval:!doc.all_users",
+   "fieldname": "allowed_users",
+   "fieldtype": "Table",
+   "label": "Allowed Users",
+   "options": "IPM Allowed User"
+  },
+  {
+   "fieldname": "scope_section",
+   "fieldtype": "Section Break",
+   "label": "Permission Scope"
+  },
+  {
+   "default": "0",
+   "fieldname": "all_roles",
+   "fieldtype": "Check",
+   "label": "All Roles (except System Manager)"
+  },
+  {
+   "depends_on": "eval:!doc.all_roles",
+   "fieldname": "allowed_roles",
+   "fieldtype": "Table",
+   "label": "Allowed Roles",
+   "options": "IPM Allowed Role"
+  },
+  {
+   "fieldname": "column_break_scope",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "all_modules",
+   "fieldtype": "Check",
+   "label": "All Modules"
+  },
+  {
+   "depends_on": "eval:!doc.all_modules",
+   "fieldname": "allowed_modules",
+   "fieldtype": "Table",
+   "label": "Allowed Modules",
+   "options": "IPM Allowed Module"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-06-30 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isoft Permission Manager",
+ "name": "ISOFT Permission Delegation",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1,
+ "title_field": "manager"
+}

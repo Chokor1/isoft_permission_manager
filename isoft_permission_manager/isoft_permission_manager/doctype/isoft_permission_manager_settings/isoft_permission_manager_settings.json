@@ -1,0 +1,73 @@
+{
+ "actions": [],
+ "creation": "2026-06-30 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "general_section",
+  "theme_color",
+  "column_break_general",
+  "block_managing_system_managers",
+  "info_section",
+  "info_html"
+ ],
+ "fields": [
+  {
+   "fieldname": "general_section",
+   "fieldtype": "Section Break",
+   "label": "General"
+  },
+  {
+   "default": "Red",
+   "fieldname": "theme_color",
+   "fieldtype": "Select",
+   "label": "Theme Color",
+   "options": "Red\nBlue\nGreen\nPurple\nOrange\nSlate\nDark"
+  },
+  {
+   "fieldname": "column_break_general",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "block_managing_system_managers",
+   "fieldtype": "Check",
+   "label": "Never allow managing System Managers",
+   "description": "When enabled, delegated managers can never view or modify the permissions of any user who is a System Manager (recommended)."
+  },
+  {
+   "fieldname": "info_section",
+   "fieldtype": "Section Break",
+   "label": "How it works"
+  },
+  {
+   "fieldname": "info_html",
+   "fieldtype": "HTML",
+   "options": "<div class='text-muted'><p>System Managers configure <b>ISOFT Permission Delegation</b> records: pick a manager, the users they may manage, and the roles/modules within their scope. Managers (users with the <b>ISOFT Permission Manager</b> role) then use the Permission Manager page to manage those users.</p></div>"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-30 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isoft Permission Manager",
+ "name": "ISOFT Permission Manager Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "quick_entry": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}
