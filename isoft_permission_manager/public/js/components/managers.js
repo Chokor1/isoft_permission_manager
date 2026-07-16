@@ -7,14 +7,14 @@ ipm.views.managers = function (ctx) {
 	const esc = ctx.esc;
 	const st = ctx.state.managers = ctx.state.managers || { pickers: null };
 
-	ctx.$content.html('<div class="ipm-loading"><i class="fa fa-spinner fa-spin"></i> Loading…</div>');
+	ctx.$content.html(ipm.skeleton('list'));
 
 	const ensurePickers = () => st.pickers
 		? Promise.resolve(st.pickers)
 		: ctx.api('get_pickers').then((p) => (st.pickers = p || { roles: [], modules: [], users: [] }));
 
 	const renderList = () => {
-		ctx.$content.html('<div class="ipm-loading"><i class="fa fa-spinner fa-spin"></i> Loading…</div>');
+		ctx.$content.html(ipm.skeleton('list'));
 		ctx.api('list_delegations').then((rows) => {
 			rows = rows || [];
 			const scopeText = (all, count, label) => all ? `All ${label}` : `${count} ${label}`;
@@ -34,14 +34,14 @@ ipm.views.managers = function (ctx) {
 
 			ctx.$content.html(`
 				<div class="ipm-card">
-					<div class="ipm-card-title"><i class="fa fa-users-cog"></i> Delegations
+					<div class="ipm-card-title"><i class="fa fa-users"></i> Delegations
 						<span class="ipm-pill">${rows.length}</span>
 						<button class="ipm-btn ipm-btn-primary ipm-btn-sm" id="ipm-new-del" style="margin-left:10px;"><i class="fa fa-plus"></i> New delegation</button>
 					</div>
 					${rows.length ? `<table class="ipm-table"><thead><tr>
 						<th>Manager</th><th>Status</th><th>Users</th><th>Roles</th><th>Modules</th><th></th>
 					</tr></thead><tbody>${body}</tbody></table>`
-					: '<div class="ipm-empty"><i class="fa fa-users-cog"></i>No delegations yet. Create one to let a user manage permissions.</div>'}
+					: '<div class="ipm-empty"><i class="fa fa-users"></i>No delegations yet. Create one to let a user manage permissions.</div>'}
 				</div>
 			`);
 
@@ -57,6 +57,7 @@ ipm.views.managers = function (ctx) {
 	};
 
 	const openEditor = (name) => {
+		ctx.$content.html(ipm.skeleton('detail'));
 		Promise.all([ensurePickers(), name ? ctx.api('get_delegation', { name }) : Promise.resolve(null)])
 			.then(([pickers, d]) => renderEditor(pickers, d));
 	};
@@ -76,6 +77,8 @@ ipm.views.managers = function (ctx) {
 			can_edit_user_permissions: d.can_edit_user_permissions != null ? d.can_edit_user_permissions : 1,
 			can_edit_modules: d.can_edit_modules != null ? d.can_edit_modules : 1,
 			can_view_pages_reports: d.can_view_pages_reports != null ? d.can_view_pages_reports : 1,
+			can_reset_password: d.can_reset_password || 0,
+			can_enable_disable: d.can_enable_disable || 0,
 			all_users: d.all_users || 0, all_roles: d.all_roles || 0, all_modules: d.all_modules || 0
 		};
 		const groups = {
@@ -93,7 +96,7 @@ ipm.views.managers = function (ctx) {
 
 		ctx.$content.html(`
 			<div class="ipm-card" style="max-width:980px;">
-				<div class="ipm-card-title"><i class="fa fa-user-shield"></i> ${isNew ? 'New delegation' : esc(model.manager)}
+				<div class="ipm-card-title"><i class="fa fa-id-card-o"></i> ${isNew ? 'New delegation' : esc(model.manager)}
 					<button class="ipm-btn ipm-btn-sm" id="ipm-back" style="margin-left:auto;"><i class="fa fa-arrow-left"></i> Back</button>
 				</div>
 
@@ -114,6 +117,8 @@ ipm.views.managers = function (ctx) {
 						${checkRow('can_edit_user_permissions', 'Edit user permissions')}
 						${checkRow('can_edit_modules', 'Edit module access')}
 						${checkRow('can_view_pages_reports', 'View pages / reports')}
+						${checkRow('can_reset_password', 'Reset passwords')}
+						${checkRow('can_enable_disable', 'Enable / disable users')}
 					</div>
 				</div>
 

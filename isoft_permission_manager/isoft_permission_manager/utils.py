@@ -12,10 +12,13 @@
 # re-validate target user + scope server-side - the front-end is never trusted.
 
 import json
+import secrets
+import string
 
 import frappe
 from frappe import _
 from frappe.utils import cint
+from frappe.utils.password import update_password as _update_password
 
 SETTINGS_DOCTYPE = "ISOFT Permission Manager Settings"
 DELEGATION_DOCTYPE = "ISOFT Permission Delegation"
@@ -26,6 +29,21 @@ MANAGER_ROLE = "ISOFT Permission Manager"
 PROTECTED_ROLES = {"System Manager", "Administrator", "All", "Guest"}
 # Users that are never management targets.
 PROTECTED_USERS = {"Administrator", "Guest"}
+
+# The always-allowed fallback report shipped by this app. Report visibility is
+# stored as User Permissions on the Report doctype, where "no permissions" means
+# unrestricted - so "no report access" cannot be expressed by an empty set. We
+# express it by leaving this harmless report as the only permitted one.
+SENTINEL_REPORT = "My User Info"
+
+# The page equivalent of SENTINEL_REPORT, and the reason it is "print" rather
+# than something we ship: /app/print/<doctype>/<name> - the document print view -
+# is itself a Page, and frappe has no PrintFactory, so that route really does go
+# through Page.is_permitted(). Blocking it would kill printing for every doctype
+# site-wide, which is governed by each doctype's `print` permission, not by page
+# access. So it must always be reachable - which makes it the natural value to
+# park in the User Permission slot when a user is restricted to no pages.
+SENTINEL_PAGE = "print"
 
 
 # --------------------------------------------------------------------------- #
@@ -70,6 +88,45 @@ def _settings():
 	return frappe.get_single(SETTINGS_DOCTYPE)
 
 
+# Accent palette, mirrored by ipm.THEMES in the page JS. Kept here too so the
+# navbar icon - which loads on every desk page, without the app's stylesheet -
+# can be tinted without shipping the whole page bundle everywhere.
+THEME_PALETTE = {
+	"Red": {"p": "#dc2626", "d": "#991b1b", "a": "#ef4444", "rgb": "220,38,38"},
+	"Blue": {"p": "#2563eb", "d": "#1e40af", "a": "#3b82f6", "rgb": "37,99,235"},
+	"Green": {"p": "#059669", "d": "#047857", "a": "#10b981", "rgb": "5,150,105"},
+	"Purple": {"p": "#7c3aed", "d": "#5b21b6", "a": "#8b5cf6", "rgb": "124,58,237"},
+	"Orange": {"p": "#ea580c", "d": "#c2410c", "a": "#f97316", "rgb": "234,88,12"},
+	"Slate": {"p": "#475569", "d": "#334155", "a": "#64748b", "rgb": "71,85,105"},
+	"Dark": {"p": "#0f172a", "d": "#020617", "a": "#334155", "rgb": "15,23,42"},
+}
+THEME_COLORS = set(THEME_PALETTE)
+
+
+@frappe.whitelist()
+def get_navbar_info():
+	"""One call for the navbar shortcut: may this user open the app, and in which
+	accent. Returns access as an explicit flag - never a truthy wrapper object -
+	so a mis-read on the client cannot reveal the icon to everyone."""
+	if not _has_access():
+		return {"can_access": 0}
+	theme = _settings().theme_color or "Red"
+	return {
+		"can_access": 1,
+		"palette": THEME_PALETTE.get(theme, THEME_PALETTE["Red"]),
+	}
+
+
+@frappe.whitelist()
+def set_theme(theme_color):
+	"""Persist the accent theme picked from the toolbar (System Managers only)."""
+	_assert_admin()
+	if theme_color not in THEME_COLORS:
+		frappe.throw(_("Unknown theme: {0}").format(theme_color))
+	frappe.db.set_single_value(SETTINGS_DOCTYPE, "theme_color", theme_color)
+	return {"ok": 1, "theme_color": theme_color}
+
+
 @frappe.whitelist()
 def get_settings():
 	s = _settings()
@@ -96,7 +153,10 @@ def _scope():
 			"all_users": True, "users": None,
 			"all_roles": True, "roles": None,
 			"all_modules": True, "modules": None,
-			"caps": {"roles": 1, "user_permissions": 1, "modules": 1, "pages_reports": 1},
+			"caps": {
+				"roles": 1, "user_permissions": 1, "modules": 1,
+				"pages_reports": 1, "reset_password": 1, "enable_disable": 1,
+			},
 		}
 
 	d = _get_delegation()
@@ -116,6 +176,8 @@ def _scope():
 			"user_permissions": cint(d.can_edit_user_permissions),
 			"modules": cint(d.can_edit_modules),
 			"pages_reports": cint(d.can_view_pages_reports),
+			"reset_password": cint(d.can_reset_password),
+			"enable_disable": cint(d.can_enable_disable),
 		},
 	}
 
@@ -139,11 +201,15 @@ def _is_system_manager_user(user):
 
 
 def _real_users():
-	"""All enabled, non-internal users."""
+	"""All non-internal users, enabled or not.
+
+	Disabled users are deliberately included: they must stay selectable, or a
+	manager who disables someone could never find them again to switch them back
+	on. The front-end marks them instead of hiding them.
+	"""
 	users = frappe.get_all(
 		"User",
-		filters={"enabled": 1},
-		fields=["name", "full_name", "user_type", "last_login"],
+		fields=["name", "full_name", "user_type", "last_login", "enabled"],
 		order_by="full_name asc",
 	)
 	return [u for u in users if u.name not in PROTECTED_USERS]
@@ -260,14 +326,19 @@ def get_user_overview(user):
 		"modules": modules,
 		"other_blocked_modules": other_blocked,
 		"user_permissions": ups,
+		# Viewing page/report access follows the same capability as the lists.
+		"report_access": _get_report_access(user, user_roles) if scope["caps"]["pages_reports"] else None,
+		"page_access": _get_page_access(user, user_roles) if scope["caps"]["pages_reports"] else None,
 	}
 
-	# View-only: doctype access, pages, reports (derived from roles).
-	overview.update(_access_summary(user_roles))
+	# View-only: doctype access, pages, reports (derived from roles). Pages and
+	# reports are withheld entirely without the capability - hiding them only in
+	# the front-end would still ship the list in the response.
+	overview.update(_access_summary(user_roles, with_pages_reports=bool(scope["caps"]["pages_reports"])))
 	return overview
 
 
-def _access_summary(user_roles):
+def _access_summary(user_roles, with_pages_reports=True):
 	if not user_roles:
 		return {"doctype_access": [], "pages": [], "reports": []}
 
@@ -295,6 +366,9 @@ def _access_summary(user_roles):
 		{"roles": tuple(user_roles)},
 		as_dict=True,
 	)
+
+	if not with_pages_reports:
+		return {"doctype_access": doctype_access, "pages": [], "reports": []}
 
 	pages = [
 		r.parent for r in frappe.db.sql(
@@ -417,6 +491,312 @@ def remove_user_permission(name):
 
 
 # --------------------------------------------------------------------------- #
+# Page access (per-user allowlist, stored as User Permissions on "Page")
+# --------------------------------------------------------------------------- #
+def _reachable_pages(user_roles):
+	"""Desk pages this user can open today, by role alone.
+
+	Mirrors Page.is_permitted(): a page with no roles attached is open to
+	everyone. The sentinel is excluded - it is never a choice.
+	"""
+	rows = frappe.db.sql(
+		"""
+		SELECT p.name, p.title
+		FROM `tabPage` p
+		WHERE p.name != %(sentinel)s AND (
+			NOT EXISTS (
+				SELECT 1 FROM `tabHas Role` h
+				WHERE h.parent = p.name AND h.parenttype = 'Page'
+			)
+			OR EXISTS (
+				SELECT 1 FROM `tabHas Role` h
+				WHERE h.parent = p.name AND h.parenttype = 'Page' AND h.role IN %(roles)s
+			)
+		)
+		ORDER BY p.name
+		""",
+		{"roles": tuple(user_roles) if user_roles else ("__none__",), "sentinel": SENTINEL_PAGE},
+		as_dict=True,
+	)
+	return [{"name": r.name, "title": r.title or r.name} for r in rows]
+
+
+def _get_page_access(user, user_roles):
+	allowed = set(
+		frappe.get_all("User Permission", filters={"user": user, "allow": "Page"}, pluck="for_value")
+	)
+	return {
+		"restricted": 1 if allowed else 0,
+		"allowed": sorted(allowed - {SENTINEL_PAGE}),
+		"reachable": _reachable_pages(user_roles),
+		"sentinel": SENTINEL_PAGE,
+	}
+
+
+@frappe.whitelist()
+def set_page_access(user, restricted, pages):
+	"""Restrict a user to `pages`, or lift the restriction entirely.
+
+	restricted=0 -> delete every Page User Permission (back to role-only access).
+	restricted=1 -> keep exactly `pages` + the sentinel (the print view, which
+	                must never be blocked - see SENTINEL_PAGE).
+	"""
+	_assert_access()
+	scope = _scope()
+	_assert_can_manage(user, scope)
+	if not scope["caps"]["pages_reports"]:
+		frappe.throw(_("You are not allowed to view page access."), frappe.PermissionError)
+	if not scope["caps"]["user_permissions"]:
+		frappe.throw(_("You are not allowed to edit user permissions."), frappe.PermissionError)
+	# The Permission Manager is itself a desk page: restricting your own pages
+	# could lock you out of the very tool needed to undo it.
+	if cint(restricted) and user == frappe.session.user:
+		frappe.throw(_("You cannot restrict your own page access."))
+
+	existing = {
+		u.for_value: u.name
+		for u in frappe.get_all(
+			"User Permission", filters={"user": user, "allow": "Page"}, fields=["name", "for_value"]
+		)
+	}
+
+	if not cint(restricted):
+		for name in existing.values():
+			frappe.delete_doc("User Permission", name, ignore_permissions=True)
+		frappe.msgprint(_("{0} can now open any page their roles allow.").format(user), alert=True, indicator="green")
+		return {"ok": 1, "restricted": 0}
+
+	selected = {p for p in _loads(pages) if frappe.db.exists("Page", p)}
+	final = selected | {SENTINEL_PAGE}
+
+	for value in final - set(existing):
+		frappe.get_doc({
+			"doctype": "User Permission",
+			"user": user,
+			"allow": "Page",
+			"for_value": value,
+			"apply_to_all_doctypes": 1,
+		}).insert(ignore_permissions=True)
+
+	for value, name in existing.items():
+		if value not in final:
+			frappe.delete_doc("User Permission", name, ignore_permissions=True)
+
+	frappe.msgprint(
+		_("{0} is now restricted to {1} page(s).").format(user, len(selected)),
+		alert=True, indicator="green",
+	)
+	return {"ok": 1, "restricted": 1, "count": len(selected)}
+
+
+# --------------------------------------------------------------------------- #
+# Report access (per-user allowlist, stored as User Permissions on "Report")
+# --------------------------------------------------------------------------- #
+def _reachable_reports(user_roles):
+	"""Reports this user can open today, by role alone.
+
+	Mirrors Report.is_permitted(): a report with no roles attached is open to
+	everyone, so those must be listed too - they are the ones a manager would
+	otherwise have no way to take away.
+	"""
+	rows = frappe.db.sql(
+		"""
+		SELECT r.name
+		FROM `tabReport` r
+		WHERE r.disabled = 0 AND r.name != %(sentinel)s AND (
+			NOT EXISTS (
+				SELECT 1 FROM `tabHas Role` h
+				WHERE h.parent = r.name AND h.parenttype = 'Report'
+			)
+			OR EXISTS (
+				SELECT 1 FROM `tabHas Role` h
+				WHERE h.parent = r.name AND h.parenttype = 'Report' AND h.role IN %(roles)s
+			)
+		)
+		ORDER BY r.name
+		""",
+		# A user with no roles still reaches the role-less reports.
+		{"roles": tuple(user_roles) if user_roles else ("__none__",), "sentinel": SENTINEL_REPORT},
+		as_dict=True,
+	)
+	return [r.name for r in rows]
+
+
+def _get_report_access(user, user_roles):
+	allowed = set(
+		frappe.get_all("User Permission", filters={"user": user, "allow": "Report"}, pluck="for_value")
+	)
+	return {
+		# No User Permission rows at all == unrestricted. That is frappe's rule,
+		# not ours, and it is why the sentinel report exists.
+		"restricted": 1 if allowed else 0,
+		"allowed": sorted(allowed - {SENTINEL_REPORT}),
+		"reachable": _reachable_reports(user_roles),
+		"sentinel": SENTINEL_REPORT,
+	}
+
+
+@frappe.whitelist()
+def set_report_access(user, restricted, reports):
+	"""Restrict a user to `reports`, or lift the restriction entirely.
+
+	restricted=0 -> delete every Report User Permission (back to role-only access).
+	restricted=1 -> keep exactly `reports` + the sentinel. An empty selection
+	                therefore means "no reports", which an empty User Permission
+	                set could never express.
+	"""
+	_assert_access()
+	scope = _scope()
+	_assert_can_manage(user, scope)
+	if not scope["caps"]["pages_reports"]:
+		frappe.throw(_("You are not allowed to view report access."), frappe.PermissionError)
+	if not scope["caps"]["user_permissions"]:
+		frappe.throw(_("You are not allowed to edit user permissions."), frappe.PermissionError)
+
+	existing = {
+		u.for_value: u.name
+		for u in frappe.get_all(
+			"User Permission", filters={"user": user, "allow": "Report"}, fields=["name", "for_value"]
+		)
+	}
+
+	if not cint(restricted):
+		for name in existing.values():
+			frappe.delete_doc("User Permission", name, ignore_permissions=True)
+		frappe.msgprint(_("{0} can now open any report their roles allow.").format(user), alert=True, indicator="green")
+		return {"ok": 1, "restricted": 0}
+
+	selected = {r for r in _loads(reports) if frappe.db.exists("Report", r)}
+	final = selected | {SENTINEL_REPORT}
+
+	for value in final - set(existing):
+		frappe.get_doc({
+			"doctype": "User Permission",
+			"user": user,
+			"allow": "Report",
+			"for_value": value,
+			"apply_to_all_doctypes": 1,
+		}).insert(ignore_permissions=True)
+
+	for value, name in existing.items():
+		if value not in final:
+			frappe.delete_doc("User Permission", name, ignore_permissions=True)
+
+	frappe.msgprint(
+		_("{0} is now restricted to {1} report(s).").format(user, len(selected)),
+		alert=True, indicator="green",
+	)
+	return {"ok": 1, "restricted": 1, "count": len(selected)}
+
+
+# --------------------------------------------------------------------------- #
+# Enable / disable an account
+# --------------------------------------------------------------------------- #
+@frappe.whitelist()
+def set_user_enabled(user, enabled):
+	"""Switch a managed user's account on or off.
+
+	Saves the User doc rather than writing the field directly, so frappe's own
+	check_enable_disable() still runs: it refuses to disable the last System
+	Manager, clears the user's sessions, and toggles their notifications.
+	"""
+	_assert_access()
+	scope = _scope()
+	_assert_can_manage(user, scope)
+	if not scope["caps"]["enable_disable"]:
+		frappe.throw(_("You are not allowed to enable or disable users."), frappe.PermissionError)
+
+	enabled = cint(enabled)
+	# Locking yourself out is not recoverable from this page.
+	if not enabled and user == frappe.session.user:
+		frappe.throw(_("You cannot disable your own account."))
+
+	ud = frappe.get_doc("User", user)
+	if cint(ud.enabled) == enabled:
+		return {"ok": 1, "enabled": enabled}
+
+	ud.enabled = enabled
+	ud.save(ignore_permissions=True)
+
+	ud.add_comment(
+		"Comment",
+		_("Account {0} by {1} via Permission Manager.").format(
+			_("enabled") if enabled else _("disabled"), frappe.session.user
+		),
+	)
+	frappe.msgprint(
+		_("{0} has been {1}.").format(user, _("enabled") if enabled else _("disabled")),
+		alert=True, indicator="green" if enabled else "orange",
+	)
+	return {"ok": 1, "enabled": enabled}
+
+
+# --------------------------------------------------------------------------- #
+# Password reset
+# --------------------------------------------------------------------------- #
+# Characters that survive being read aloud or copied by hand: no 0/O, 1/l/I.
+_PWD_LOWER = "abcdefghijkmnopqrstuvwxyz"
+_PWD_UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+_PWD_DIGITS = "23456789"
+_PWD_SYMBOLS = "!@#$%&*?"
+
+# Sentinel date that makes frappe.auth force the /update-password flow at the
+# next login (see LoginManager.force_user_to_reset_password).
+_PASSWORD_EXPIRED_DATE = "1970-01-01"
+
+
+def _generate_password(length=14):
+	"""A random password with at least one character from each class."""
+	pools = [_PWD_LOWER, _PWD_UPPER, _PWD_DIGITS, _PWD_SYMBOLS]
+	chars = [secrets.choice(p) for p in pools]
+	everything = "".join(pools)
+	chars += [secrets.choice(everything) for _ in range(length - len(chars))]
+	secrets.SystemRandom().shuffle(chars)
+	return "".join(chars)
+
+
+@frappe.whitelist()
+def reset_user_password(user):
+	"""Set a random password for a managed user and force them to change it at
+	their next login. Returns the generated password once - it is never stored
+	in readable form, so it cannot be retrieved again."""
+	_assert_access()
+	scope = _scope()
+	_assert_can_manage(user, scope)
+	if not scope["caps"]["reset_password"]:
+		frappe.throw(_("You are not allowed to reset passwords."), frappe.PermissionError)
+	if user == frappe.session.user:
+		frappe.throw(_("Use My Settings to change your own password."))
+
+	password = _generate_password()
+	# Bypasses User.password_strength_test: the generated password is strong by
+	# construction, and the user picks their own at the next login anyway.
+	_update_password(user=user, pwd=password, logout_all_sessions=True)
+
+	frappe.db.set_value(
+		"User",
+		user,
+		{"last_password_reset_date": _PASSWORD_EXPIRED_DATE, "reset_password_key": ""},
+		update_modified=False,
+	)
+
+	# An account locked by failed attempts stays locked otherwise.
+	from frappe.utils.password import delete_login_failed_cache
+
+	delete_login_failed_cache(user)
+
+	frappe.get_doc("User", user).add_comment(
+		"Comment", _("Password reset by {0} via Permission Manager.").format(frappe.session.user)
+	)
+
+	# Without a non-zero policy, frappe never expires the password and the forced
+	# change at next login silently does not happen.
+	forced = cint(frappe.db.get_single_value("System Settings", "force_user_to_reset_password")) > 0
+
+	return {"ok": 1, "user": user, "password": password, "forced_change": 1 if forced else 0}
+
+
+# --------------------------------------------------------------------------- #
 # Delegation management (System Manager / admin only)
 # --------------------------------------------------------------------------- #
 def _assert_admin():
@@ -459,6 +839,8 @@ def get_delegation(name):
 		"can_edit_user_permissions": cint(d.can_edit_user_permissions),
 		"can_edit_modules": cint(d.can_edit_modules),
 		"can_view_pages_reports": cint(d.can_view_pages_reports),
+		"can_reset_password": cint(d.can_reset_password),
+		"can_enable_disable": cint(d.can_enable_disable),
 		"all_users": cint(d.all_users),
 		"all_roles": cint(d.all_roles),
 		"all_modules": cint(d.all_modules),
@@ -485,6 +867,8 @@ def save_delegation(payload):
 	d.can_edit_user_permissions = cint(data.get("can_edit_user_permissions", 1))
 	d.can_edit_modules = cint(data.get("can_edit_modules", 1))
 	d.can_view_pages_reports = cint(data.get("can_view_pages_reports", 1))
+	d.can_reset_password = cint(data.get("can_reset_password", 0))
+	d.can_enable_disable = cint(data.get("can_enable_disable", 0))
 	d.all_users = cint(data.get("all_users", 0))
 	d.all_roles = cint(data.get("all_roles", 0))
 	d.all_modules = cint(data.get("all_modules", 0))

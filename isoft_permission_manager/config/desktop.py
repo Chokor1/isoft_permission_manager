@@ -6,7 +6,7 @@ def get_data():
 		{
 			"module_name": "Isoft Permission Manager",
 			"color": "red",
-			"icon": "fa fa-lock",
+			"icon": "fa fa-shield",
 			"type": "module",
 			"label": _("Isoft Permission Manager"),
 		}
