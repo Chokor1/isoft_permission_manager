@@ -13,6 +13,10 @@ ipm.views.users = function (ctx) {
 	const st = ctx.state.users = ctx.state.users || { selected: null, search: '', enabled_only: false };
 
 	const disabledCount = (boot.users || []).filter((u) => !u.enabled).length;
+	// The badge sits next to the words "Enabled only", so it has to be the number
+	// of enabled users - i.e. what you get by ticking it. How many get hidden
+	// belongs in the tooltip, not the badge.
+	const enabledCount = (boot.users || []).length - disabledCount;
 
 	ctx.$content.html(`
 		<div class="ipm-layout">
@@ -24,9 +28,9 @@ ipm.views.users = function (ctx) {
 				${disabledCount ? `
 				<div class="ipm-chips" style="margin-bottom:10px;">
 					<span class="ipm-chip ipm-chip-sm ${st.enabled_only ? 'on' : ''}" id="ipm-enabled-only"
-						title="${__('Hide disabled accounts')}">
+						title="${__('Hides {0} disabled account(s)', [disabledCount])}">
 						<i class="fa ${st.enabled_only ? 'fa-check-square-o' : 'fa-square-o'}"></i>${__('Enabled only')}
-						<span class="ipm-chip-count">${disabledCount}</span>
+						<span class="ipm-chip-count">${enabledCount}</span>
 					</span>
 				</div>` : ''}
 				<div class="ipm-userlist" id="ipm-userlist"></div>
@@ -111,6 +115,7 @@ ipm.views.users = function (ctx) {
 		const canResetPwd = !!caps.reset_password && p.name !== frappe.session.user;
 		// Disabling yourself is refused server-side, so don't offer it either.
 		const canToggle = !!caps.enable_disable && p.name !== frappe.session.user;
+		const logsVisible = !!caps.logs;
 		const pagesReportsVisible = !!caps.pages_reports;
 		// Report access is stored as User Permissions, so editing it needs that cap.
 		const reportsEditable = pagesReportsVisible && !!caps.user_permissions;
@@ -130,6 +135,7 @@ ipm.views.users = function (ctx) {
 							aria-label="${__('Account enabled')}" role="switch" aria-checked="${p.enabled ? 'true' : 'false'}">
 							<span class="ipm-switch-knob"></span>
 						</button>` : ''}
+					${logsVisible ? `<button class="ipm-btn ipm-btn-sm" id="ipm-open-logs" title="${__('Open the activity log filtered on this user')}"><i class="fa fa-history"></i> ${__('Activity log')}</button>` : ''}
 					${canResetPwd ? `<button class="ipm-btn ipm-btn-sm" id="ipm-reset-pwd" title="${__('Reset this user\'s password')}"><i class="fa fa-key"></i> ${__('Reset password')}</button>` : ''}
 				</div>
 			</div>
@@ -402,6 +408,15 @@ ipm.views.users = function (ctx) {
 
 		if (canResetPwd) {
 			ctx.$content.find('#ipm-reset-pwd').on('click', () => confirmReset(p));
+		}
+
+		// Hand this user over to the Activity log tab, preselected. Filters already
+		// chosen there survive, so switching users mid-investigation keeps them.
+		if (logsVisible) {
+			ctx.$content.find('#ipm-open-logs').on('click', () => {
+				ctx.state.logs = Object.assign(ctx.state.logs || {}, { user: p.name });
+				ctx.app.set_view('logs');
+			});
 		}
 
 		if (canToggle) {

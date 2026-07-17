@@ -19,6 +19,7 @@
   "can_view_pages_reports",
   "can_reset_password",
   "can_enable_disable",
+  "can_view_logs",
   "users_section",
   "all_users",
   "allowed_users",
@@ -101,6 +102,13 @@
    "fieldtype": "Check",
    "label": "Can Enable / Disable Users",
    "description": "Allows switching a managed user's account on or off. A disabled user cannot log in and is signed out of all sessions."
+  },
+  {
+   "default": "0",
+   "fieldname": "can_view_logs",
+   "fieldtype": "Check",
+   "label": "Can View User Logs",
+   "description": "Allows viewing a managed user's activity: logins, document changes, prints/exports and pages visited."
   },
   {
    "fieldname": "users_section",

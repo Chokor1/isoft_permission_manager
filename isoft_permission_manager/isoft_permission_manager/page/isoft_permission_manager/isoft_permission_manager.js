@@ -37,9 +37,11 @@ ipm.skeleton = function (kind) {
 };
 
 // admin: only visible to System Managers.
+// cap:   only visible when the caller's delegation grants that capability.
 ipm.VIEWS = [
-	{ key: 'users',    label: 'Permissions', icon: 'fa-id-card-o', file: 'users',    admin: false },
-	{ key: 'managers', label: 'Managers',    icon: 'fa-users',   file: 'managers', admin: true }
+	{ key: 'users',    label: 'Permissions',  icon: 'fa-id-card-o', file: 'users',    admin: false },
+	{ key: 'logs',     label: 'Activity log', icon: 'fa-history',   file: 'logs',     admin: false, cap: 'logs' },
+	{ key: 'managers', label: 'Managers',     icon: 'fa-users',     file: 'managers', admin: true }
 ];
 
 ipm.apply_chrome = function () {
@@ -224,8 +226,15 @@ ipm.App = class App {
 		setTimeout(() => window.dispatchEvent(new Event('resize')), 80);
 	}
 
+	// Single source of truth for which tabs exist - build_tabs and set_view must
+	// never disagree, or a hidden view stays reachable by falling through.
+	visible_views() {
+		const caps = (this.state.bootstrap || {}).capabilities || {};
+		return ipm.VIEWS.filter((v) => (!v.admin || this.state.is_admin) && (!v.cap || !!caps[v.cap]));
+	}
+
 	build_tabs() {
-		const views = ipm.VIEWS.filter((v) => !v.admin || this.state.is_admin);
+		const views = this.visible_views();
 		const tabs = views.map((v) => `
 			<button class="ipm-tab" data-view="${v.key}"><i class="fa ${v.icon}"></i> ${v.label}</button>`).join('');
 		this.page.main.find('.ipm-tabs').html(tabs);
@@ -241,7 +250,7 @@ ipm.App = class App {
 	}
 
 	set_view(key) {
-		const views = ipm.VIEWS.filter((v) => !v.admin || this.state.is_admin);
+		const views = this.visible_views();
 		const view = views.find((v) => v.key === key) || views[0];
 		if (!view) return;
 		this.state.active_view = view.key;
@@ -480,6 +489,37 @@ ipm.App = class App {
 		}
 		[data-theme="dark"] .ipm-off-badge { color: #fbbf24; }
 
+		/* ---------------- activity log ---------------- */
+		.ipm-log-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+		.ipm-log-list { max-height: 420px; overflow: auto; border: 1px solid var(--ipm-border); border-radius: var(--ipm-r-md); }
+		.ipm-log-row {
+			display: grid; grid-template-columns: 96px minmax(120px, 1fr) minmax(0, 1.6fr) auto;
+			gap: 10px; align-items: center; padding: 9px 12px; font-size: 12.5px;
+			border-bottom: 1px solid var(--ipm-border); border-left: 2px solid transparent;
+			transition: background var(--ipm-fast) var(--ipm-ease);
+		}
+		.ipm-log-row:last-child { border-bottom: none; }
+		.ipm-log-row:hover { background: rgba(var(--ipm-primary-rgb), .04); }
+		.ipm-log-kind {
+			font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px;
+			text-align: center; padding: 3px 6px; border-radius: 999px;
+			background: var(--ipm-bg); color: var(--ipm-muted); border: 1px solid var(--ipm-border);
+			white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+		}
+		.ipm-log-title { font-weight: 600; color: var(--ipm-text); }
+		.ipm-log-status { font-size: 10px; font-weight: 700; color: var(--ipm-muted); text-transform: uppercase; }
+		.ipm-log-detail { color: var(--ipm-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+		.ipm-log-when { color: var(--ipm-faint); font-size: 11px; white-space: nowrap; }
+		/* Failed logins and data leaving the system get flagged. */
+		.ipm-log-danger { border-left-color: #dc2626; background: rgba(220,38,38,.05); }
+		.ipm-log-danger .ipm-log-title { color: #dc2626; }
+		.ipm-log-warn { border-left-color: #f59e0b; background: rgba(245,158,11,.05); }
+		[data-theme="dark"] .ipm-log-danger .ipm-log-title { color: #f87171; }
+		@media (max-width: 720px) {
+			.ipm-log-row { grid-template-columns: 1fr auto; }
+			.ipm-log-kind, .ipm-log-detail { grid-column: 1 / -1; text-align: left; }
+		}
+
 		/* ---------------- switch ---------------- */
 		.ipm-switch {
 			position: relative; width: 42px; height: 24px; flex: 0 0 auto; padding: 0; cursor: pointer;
@@ -531,6 +571,18 @@ ipm.App = class App {
 		.ipm-chip .fa { font-size: 10px; opacity: .9; }
 		.ipm-chip.on .fa { animation: ipm-pop .26s var(--ipm-spring); }
 		.ipm-chip-sm { font-size: 11.5px; padding: 4px 10px; }
+		/* Disabled accounts in a picker: muted, but still selectable. Once picked,
+		   full contrast - a selection you cannot read is worse than no marker. */
+		.ipm-chip-off { opacity: .62; border-style: dashed; }
+		.ipm-chip-off:hover, .ipm-chip-off.on { opacity: 1; }
+		.ipm-chip-off.on { border-style: solid; }
+		.ipm-chip-tag {
+			font-size: 8.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px;
+			line-height: 1; padding: 2px 5px; border-radius: 999px;
+			background: rgba(245,158,11,.16); color: #b45309; border: 1px solid rgba(245,158,11,.32);
+		}
+		.ipm-chip.on .ipm-chip-tag { background: rgba(255,255,255,.24); color: #fff; border-color: transparent; }
+		[data-theme="dark"] .ipm-chip-off .ipm-chip-tag { color: #fbbf24; }
 		.ipm-chip-count {
 			font-size: 9.5px; font-weight: 800; line-height: 1; padding: 2px 5px; border-radius: 999px;
 			background: rgba(var(--ipm-primary-rgb), .12); color: var(--ipm-primary);

@@ -79,16 +79,24 @@ ipm.views.managers = function (ctx) {
 			can_view_pages_reports: d.can_view_pages_reports != null ? d.can_view_pages_reports : 1,
 			can_reset_password: d.can_reset_password || 0,
 			can_enable_disable: d.can_enable_disable || 0,
+			can_view_logs: d.can_view_logs || 0,
 			all_users: d.all_users || 0, all_roles: d.all_roles || 0, all_modules: d.all_modules || 0
 		};
 		const groups = {
-			users: chipGroup('users', (pickers.users || []).map((u) => ({ value: u.name, label: u.full_name || u.name })), d.allowed_users, 'users'),
+			// `off` marks disabled accounts. They stay selectable - a disabled user
+			// is still a valid thing to manage, and someone has to be able to grant
+			// scope over them before they are switched back on.
+			users: chipGroup('users', (pickers.users || []).map((u) => ({
+				value: u.name, label: u.full_name || u.name, off: !u.enabled
+			})), d.allowed_users, 'users'),
 			roles: chipGroup('roles', (pickers.roles || []).map((r) => ({ value: r, label: r })), d.allowed_roles, 'roles'),
 			modules: chipGroup('modules', (pickers.modules || []).map((m) => ({ value: m, label: m })), d.allowed_modules, 'modules')
 		};
 		const isNew = !d.name;
+		// A disabled account can be named as manager (it just cannot log in), so
+		// say so rather than presenting it as a normal choice.
 		const userOptions = (pickers.users || []).map((u) =>
-			`<option value="${esc(u.name)}" ${model.manager === u.name ? 'selected' : ''}>${esc(u.full_name || u.name)} (${esc(u.name)})</option>`).join('');
+			`<option value="${esc(u.name)}" ${model.manager === u.name ? 'selected' : ''}>${esc(u.full_name || u.name)} (${esc(u.name)})${u.enabled ? '' : ' — ' + __('disabled')}</option>`).join('');
 
 		const checkRow = (key, label) => `
 			<label class="ipm-chip ${model[key] ? 'on' : ''}" data-flag="${key}" style="margin:0 6px 6px 0;">
@@ -119,6 +127,7 @@ ipm.views.managers = function (ctx) {
 						${checkRow('can_view_pages_reports', 'View pages / reports')}
 						${checkRow('can_reset_password', 'Reset passwords')}
 						${checkRow('can_enable_disable', 'Enable / disable users')}
+						${checkRow('can_view_logs', 'View user logs')}
 					</div>
 				</div>
 
@@ -152,8 +161,10 @@ ipm.views.managers = function (ctx) {
 			const term = (ctx.$content.find(`.ipm-group-filter[data-group="${key}"]`).val() || '').toLowerCase().trim();
 			const items = g.items.filter((it) => !term || it.label.toLowerCase().includes(term) || it.value.toLowerCase().includes(term));
 			ctx.$content.find(`.ipm-group-chips[data-group="${key}"]`).html(items.map((it) => `
-				<span class="ipm-chip ${g.sel.has(it.value) ? 'on' : ''}" data-val="${esc(it.value)}">
-					<i class="fa ${g.sel.has(it.value) ? 'fa-check' : 'fa-plus'}"></i>${esc(it.label)}</span>`).join('') ||
+				<span class="ipm-chip ${g.sel.has(it.value) ? 'on' : ''} ${it.off ? 'ipm-chip-off' : ''}" data-val="${esc(it.value)}"
+					${it.off ? `title="${__('This account is disabled')}"` : ''}>
+					<i class="fa ${g.sel.has(it.value) ? 'fa-check' : 'fa-plus'}"></i>${esc(it.label)}
+					${it.off ? `<span class="ipm-chip-tag">${__('Disabled')}</span>` : ''}</span>`).join('') ||
 				'<span style="color:var(--ipm-muted);font-size:12px;">No matches.</span>');
 		};
 		['users', 'roles', 'modules'].forEach(renderChips);

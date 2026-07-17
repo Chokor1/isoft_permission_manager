@@ -17,7 +17,7 @@ import string
 
 import frappe
 from frappe import _
-from frappe.utils import cint
+from frappe.utils import add_days, cint, nowdate, strip_html
 from frappe.utils.password import update_password as _update_password
 
 SETTINGS_DOCTYPE = "ISOFT Permission Manager Settings"
@@ -155,7 +155,7 @@ def _scope():
 			"all_modules": True, "modules": None,
 			"caps": {
 				"roles": 1, "user_permissions": 1, "modules": 1,
-				"pages_reports": 1, "reset_password": 1, "enable_disable": 1,
+				"pages_reports": 1, "reset_password": 1, "enable_disable": 1, "logs": 1,
 			},
 		}
 
@@ -178,6 +178,7 @@ def _scope():
 			"pages_reports": cint(d.can_view_pages_reports),
 			"reset_password": cint(d.can_reset_password),
 			"enable_disable": cint(d.can_enable_disable),
+			"logs": cint(d.can_view_logs),
 		},
 	}
 
@@ -690,6 +691,126 @@ def set_report_access(user, restricted, reports):
 
 
 # --------------------------------------------------------------------------- #
+# User logs (read-only audit timeline)
+# --------------------------------------------------------------------------- #
+# Four separate frappe logs, merged into one timeline. Note the ownership column
+# differs: Activity/Access/Route History carry an explicit `user`, while Version
+# only records `owner` - getting that wrong would silently show the wrong
+# person's history.
+LOG_KINDS = ("logins", "changes", "exports", "pages")
+LOG_PERIODS = {"1d": 1, "7d": 7, "30d": 30, "90d": 90, "all": None}
+LOG_MAX = 200
+
+
+def _log_from_date(period):
+	days = LOG_PERIODS.get(period, 30)
+	if days is None:
+		return None
+	return add_days(nowdate(), -days)
+
+
+def _clean(text):
+	"""Activity Log subjects contain markup - flatten it for display."""
+	return strip_html(text or "").strip()
+
+
+@frappe.whitelist()
+def get_user_logs(user, kinds=None, period="30d", search=None, limit=100):
+	"""A merged, read-only activity timeline for one managed user."""
+	_assert_access()
+	scope = _scope()
+	_assert_can_manage(user, scope)
+	if not scope["caps"]["logs"]:
+		frappe.throw(_("You are not allowed to view user logs."), frappe.PermissionError)
+
+	# `kinds` omitted means "all"; an explicit empty list means "none". Falling
+	# back on falsiness would turn "show me nothing" into "show me everything".
+	requested = None if kinds in (None, "") else _loads(kinds)
+	wanted = set(LOG_KINDS) if requested is None else (set(requested) & set(LOG_KINDS))
+	if not wanted:
+		return {"rows": [], "truncated": 0}
+
+	frm = _log_from_date(period)
+	limit = min(cint(limit) or 100, LOG_MAX)
+	term = (search or "").strip()
+	# Per-source cap: fetch enough of each to fill `limit` after merging.
+	each = limit
+
+	def date_filter(field="creation"):
+		return {field: [">=", frm]} if frm else {}
+
+	rows = []
+
+	if "logins" in wanted:
+		f = {"user": user}
+		f.update(date_filter())
+		for r in frappe.get_all(
+			"Activity Log", filters=f, order_by="creation desc", limit=each,
+			fields=["creation", "operation", "status", "subject", "reference_doctype", "reference_name"],
+		):
+			op = r.operation or _("Activity")
+			rows.append({
+				"when": str(r.creation),
+				"kind": "logins",
+				"title": op,
+				"detail": _clean(r.subject) or " ".join(filter(None, [r.reference_doctype, r.reference_name])),
+				"status": r.status or "",
+				# Failed logins are the reason anyone opens this section.
+				"level": "danger" if (r.status or "").lower() == "failed" else "",
+			})
+
+	if "changes" in wanted:
+		f = {"owner": user}  # Version has no `user` column
+		f.update(date_filter())
+		for r in frappe.get_all(
+			"Version", filters=f, order_by="creation desc", limit=each,
+			fields=["creation", "ref_doctype", "docname"],
+		):
+			rows.append({
+				"when": str(r.creation), "kind": "changes",
+				"title": _("Modified {0}").format(r.ref_doctype),
+				"detail": r.docname, "status": "", "level": "",
+			})
+
+	if "exports" in wanted:
+		f = {"user": user}
+		f.update(date_filter())
+		for r in frappe.get_all(
+			"Access Log", filters=f, order_by="creation desc", limit=each,
+			fields=["creation", "export_from", "reference_document", "file_type", "method", "report_name"],
+		):
+			what = r.report_name or r.export_from or r.reference_document or ""
+			rows.append({
+				"when": str(r.creation), "kind": "exports",
+				"title": r.method or _("Access"),
+				"detail": " ".join(filter(None, [what, f"({r.file_type})" if r.file_type else ""])).strip(),
+				"status": "",
+				# Data leaving the system is worth flagging.
+				"level": "warn" if (r.method or "") in ("Export", "PDF") else "",
+			})
+
+	if "pages" in wanted:
+		f = {"user": user}
+		f.update(date_filter())
+		for r in frappe.get_all(
+			"Route History", filters=f, order_by="creation desc", limit=each,
+			fields=["creation", "route"],
+		):
+			rows.append({
+				"when": str(r.creation), "kind": "pages",
+				"title": _("Visited"), "detail": r.route, "status": "", "level": "",
+			})
+
+	if term:
+		low = term.lower()
+		rows = [r for r in rows if low in (r["title"] or "").lower()
+				or low in (r["detail"] or "").lower() or low in (r["status"] or "").lower()]
+
+	rows.sort(key=lambda r: r["when"], reverse=True)
+	return {"rows": rows[:limit], "truncated": 1 if len(rows) > limit else 0}
+
+
+# --------------------------------------------------------------------------- #
 # Enable / disable an account
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
@@ -841,6 +962,7 @@ def get_delegation(name):
 		"can_view_pages_reports": cint(d.can_view_pages_reports),
 		"can_reset_password": cint(d.can_reset_password),
 		"can_enable_disable": cint(d.can_enable_disable),
+		"can_view_logs": cint(d.can_view_logs),
 		"all_users": cint(d.all_users),
 		"all_roles": cint(d.all_roles),
 		"all_modules": cint(d.all_modules),
@@ -869,6 +991,7 @@ def save_delegation(payload):
 	d.can_view_pages_reports = cint(data.get("can_view_pages_reports", 1))
 	d.can_reset_password = cint(data.get("can_reset_password", 0))
 	d.can_enable_disable = cint(data.get("can_enable_disable", 0))
+	d.can_view_logs = cint(data.get("can_view_logs", 0))
 	d.all_users = cint(data.get("all_users", 0))
 	d.all_roles = cint(data.get("all_roles", 0))
 	d.all_modules = cint(data.get("all_modules", 0))
