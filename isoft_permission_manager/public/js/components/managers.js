@@ -83,11 +83,17 @@ ipm.views.managers = function (ctx) {
 			all_users: d.all_users || 0, all_roles: d.all_roles || 0, all_modules: d.all_modules || 0
 		};
 		const groups = {
+			// Label carries the email because full_name is NOT unique - several real
+			// accounts share one, and a name-only chip made two different people
+			// look like the same entry listed twice.
 			// `off` marks disabled accounts. They stay selectable - a disabled user
 			// is still a valid thing to manage, and someone has to be able to grant
 			// scope over them before they are switched back on.
 			users: chipGroup('users', (pickers.users || []).map((u) => ({
-				value: u.name, label: u.full_name || u.name, off: !u.enabled
+				value: u.name,
+				label: `${u.full_name || u.name} (${u.name})`,
+				tip: u.username ? `${__('Username')}: ${u.username}` : '',
+				off: !u.enabled
 			})), d.allowed_users, 'users'),
 			roles: chipGroup('roles', (pickers.roles || []).map((r) => ({ value: r, label: r })), d.allowed_roles, 'roles'),
 			modules: chipGroup('modules', (pickers.modules || []).map((m) => ({ value: m, label: m })), d.allowed_modules, 'modules')
@@ -160,11 +166,14 @@ ipm.views.managers = function (ctx) {
 			const g = groups[key];
 			const term = (ctx.$content.find(`.ipm-group-filter[data-group="${key}"]`).val() || '').toLowerCase().trim();
 			const items = g.items.filter((it) => !term || it.label.toLowerCase().includes(term) || it.value.toLowerCase().includes(term));
-			ctx.$content.find(`.ipm-group-chips[data-group="${key}"]`).html(items.map((it) => `
+			ctx.$content.find(`.ipm-group-chips[data-group="${key}"]`).html(items.map((it) => {
+				const tip = [it.tip, it.off ? __('This account is disabled') : ''].filter(Boolean).join(' · ');
+				return `
 				<span class="ipm-chip ${g.sel.has(it.value) ? 'on' : ''} ${it.off ? 'ipm-chip-off' : ''}" data-val="${esc(it.value)}"
-					${it.off ? `title="${__('This account is disabled')}"` : ''}>
+					${tip ? `title="${esc(tip)}"` : ''}>
 					<i class="fa ${g.sel.has(it.value) ? 'fa-check' : 'fa-plus'}"></i>${esc(it.label)}
-					${it.off ? `<span class="ipm-chip-tag">${__('Disabled')}</span>` : ''}</span>`).join('') ||
+					${it.off ? `<span class="ipm-chip-tag">${__('Disabled')}</span>` : ''}</span>`;
+			}).join('') ||
 				'<span style="color:var(--ipm-muted);font-size:12px;">No matches.</span>');
 		};
 		['users', 'roles', 'modules'].forEach(renderChips);

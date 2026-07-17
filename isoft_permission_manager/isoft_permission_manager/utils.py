@@ -208,9 +208,12 @@ def _real_users():
 	manager who disables someone could never find them again to switch them back
 	on. The front-end marks them instead of hiding them.
 	"""
+	# `username` is carried so pickers can disambiguate on hover: full_name is NOT
+	# unique (several real accounts here share one), so a name-only label renders
+	# two different people as identical chips.
 	users = frappe.get_all(
 		"User",
-		fields=["name", "full_name", "user_type", "last_login", "enabled"],
+		fields=["name", "full_name", "username", "user_type", "last_login", "enabled"],
 		order_by="full_name asc",
 	)
 	return [u for u in users if u.name not in PROTECTED_USERS]
